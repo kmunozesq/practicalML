@@ -1,0 +1,72 @@
+---
+title: "Activity Performance Classification"
+author: "Karla Muñoz-Esquivel"
+date: "Sunday, June 21, 2015"
+output: html_document
+---
+
+##Overview
+This work focuses on creating a model that qualify how a person performs a physical activity usimg data from accelerometers located in the belt, forearm, arm and dumbell of six participants doing weight lifting. There are five possible classes "A" to "E", where "A" corresponds to the specific execution of the excercise and the other four classes correspond to common mistakes. The data for this investigation comes from http://groupware.les.inf.puc-rio.br/har. The selection of variables and its evaluation. In this case, The method employed for model validation is *3 fold-cross validation*, i.e. used to estimate the accuracy of the machine learning algorithms: *tree and naive bayes*. PCA was employed to avoid overfitting. The best model was the **naive bayes model**, since its accuracy of classification is 0.9447 and the accuracy of the **tree model** obtained was 0.47.
+
+###Loading and Formatting the data
+The data will be formated (remove columns with NA and timestamps) to create and validate the model using *"3-fold cross validation"*. The data provided for testing does not have the outcome *classe*, so it was not used either for training or testing the model.
+```{r loading_analysing_data, echo=TRUE, cache=FALSE, message=FALSE, warning=FALSE}
+filenametrain <- file.path(getwd(), "PracticalMachineLearning", "pml-training.csv")
+pro_data <- read.csv(filenametrain, header = TRUE, sep = ",", quote = "\"",dec = ".", fill = TRUE, stringsAsFactors = FALSE)
+
+library(data.table)
+pro_data = data.table(pro_data)
+library(dplyr)
+pro_data<- pro_data[, which(!grepl(".*timestamp.*$", colnames(pro_data))), with=FALSE]
+pro_data<-  data.table(mutate(pro_data, user_name = as.factor(user_name),
+                              classe = as.factor(classe)))
+#Converting variables that are type character to numeric
+data_num <-pro_data[, which(!grepl("^X|classe|user_name|new_window|num_window$", colnames(pro_data))), with=FALSE]
+data_num2<- data.table(sapply(data_num, as.numeric))
+tmp_data <- data.table(mutate(data_num2, X = pro_data$X, 
+                              classe = pro_data$classe,
+                              user_name = pro_data$user_name))
+
+#variables with all NAs -> removed
+na_cols_all<-sapply(tmp_data, function(x)all(is.na(x)))
+cols <- na_cols_all[na_cols_all==TRUE]
+rexp <- paste('^',paste(names(cols), collapse='|'),'$', sep='')
+final_data <- data.table(tmp_data[, which(!grepl(rexp, colnames(tmp_data))), with=FALSE])
+
+#variables with any NAs, which are 94 variables out of 149 -> leave only complete cases
+final_data<- final_data[complete.cases(final_data)==TRUE]
+#Deleting unused variables
+rm(list = c("na_cols_all","cols", "rexp", "data_num", "data_num2", "tmp_data", "pro_data", "filenametrain"))
+gc(c("na_cols_all","cols", "rexp", "data_num", "data_num2", "tmp_data", "pro_data", "filenametrain"))
+
+```
+
+###Processing the data and creating data models using caret
+```{r modelling, echo=TRUE, cache=FALSE, message=FALSE, warning=FALSE}
+#Setting up the cross-validation
+library(caret)
+set.seed(181899)
+#Remove variables with cero variance:  amplitude_yaw_belt, amplitude_yaw_dumbbell, amplitude_yaw_forearm
+final_data <- final_data[, which(!grepl("^amplitude_yaw_forearm|amplitude_yaw_belt|amplitude_yaw_dumbbell$", colnames(final_data))), with=FALSE]
+final_data_without_factors <- final_data[, which(!grepl("^X|classe|user_name$", colnames(final_data))), with=FALSE]
+preProc <- preProcess(final_data_without_factors, method="pca")
+training_pcs <- predict(preProc,final_data_without_factors) 
+final_data <- data.table(mutate(training_pcs, user_name= final_data$user_name, classe=final_data$classe))
+train_control <- trainControl(method="cv", number=3, returnData=FALSE)
+
+# Training a TREE
+modelTREE <- train(classe ~ ., data = final_data, method ="rpart", trControl = train_control)
+# Obtaining the predictions
+predictions <- predict(modelTREE, final_data[, which(!grepl("^classe$", colnames(final_data))), with=FALSE])
+# summarize results
+print(confusionMatrix(predictions, final_data$classe))
+print(modelTREE$finalModel)
+
+# Training a Naive Bayes
+modelNB <- train(classe ~ ., data = final_data, method ="nb", trControl = train_control)
+# Obtaining the predictions
+predictions <- predict(modelNB, final_data[, which(!grepl("^classe$", colnames(final_data))), with=FALSE])
+# summarize results
+print(confusionMatrix(predictions, final_data$classe))
+print(modelNB$finalModel)
+```
